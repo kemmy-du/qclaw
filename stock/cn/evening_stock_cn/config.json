@@ -1,0 +1,43 @@
+{
+  "_comment": "尾盘交易策略配置文件 - A股专用",
+  "_desc": "T+1机制：Day0信号→Day1买入→Day2卖出",
+  "_last_updated": "2026-04-11",
+  "enabled_symbols": [
+    "603773"
+  ],
+  "_field_descriptions": {
+    "name": "股票全称",
+    "currency": "交易币种",
+    "market": "市场代码（CN=A股）",
+    "trade_qty": "每次交易数量（股数，100的整数倍）",
+    "signal_time": "信号触发时间（尾盘，14:50）",
+    "buy_time": "买入执行时间（下一交易日14:50-15:00）",
+    "sell_time": "卖出执行时间（下下一交易日09:25-09:30）"
+  },
+  "symbol_configs": {
+    "603773": {
+      "_desc": "603773 - 沃格光电，光电显示器件",
+      "name": "沃格光电",
+      "currency": "CNY",
+      "market": "CN",
+      "trade_qty": 100,
+      "signal_time": "14:50",
+      "buy_time": "14:50-15:00",
+      "sell_time": "09:25-09:30",
+      "buy_slippage_pct": 0.001,
+      "sell_slippage_pct": 0.001
+    }
+  },
+  "global_defaults": {
+    "_desc": "全局默认配置（A股）",
+    "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/89a829de-fc60-4a7c-ade0-e4a422e9434b",
+    "send_to_feishu": false,
+    "notification": {
+      "_desc": "通知渠道配置",
+      "channels": [
+        "feishu"
+      ],
+      "weixin_target": "o9cq80-aiozlTjCmF5CjVtM5Mhyw@im.wechat"
+    }
+  }
+}

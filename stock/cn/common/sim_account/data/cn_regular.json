@@ -1,0 +1,12 @@
+{
+  "account_id": "cn_regular",
+  "version": "1.0",
+  "created_at": "2026-04-12 13:49:07",
+  "updated_at": "2026-04-12 13:49:07",
+  "initial_cash": 1000000.0,
+  "cash": 1000000.0,
+  "frozen_cash": 0.0,
+  "positions": {},
+  "orders": [],
+  "trades": []
+}

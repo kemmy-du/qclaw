@@ -1,0 +1,47 @@
+{
+  "_comment": "尾盘交易策略配置文件 - 美股专用",
+  "_desc": "每天凌晨3:55市价买入，第二天21:35市价卖出，T+1持仓",
+  "_last_updated": "2026-04-11",
+  "enabled_symbols": [
+    "FFAI"
+  ],
+  "_field_descriptions": {
+    "name": "股票全称",
+    "currency": "交易币种",
+    "market": "市场代码（US=美股）",
+    "trade_qty": "每次交易数量（股数）",
+    "buy_time": "每日买入时间（美股收盘后）",
+    "sell_time": "每日卖出时间（A股开盘前）",
+    "order_type": "订单类型（MKT=市价单）",
+    "buy_slippage_pct": "买入滑点比例",
+    "sell_slippage_pct": "卖出滑点比例"
+  },
+  "symbol_configs": {
+    "FFAI": {
+      "_desc": "FFAI - Farfetch",
+      "name": "Farfetch",
+      "currency": "USD",
+      "market": "US",
+      "trade_qty": 100000,
+      "buy_time": "03:55",
+      "sell_time": "21:35",
+      "order_type": "MKT",
+      "buy_slippage_pct": 0.005,
+      "sell_slippage_pct": 0.005
+    }
+  },
+  "global_defaults": {
+    "_desc": "全局默认配置（美股）",
+    "account": "21578171741955114",
+    "tiger_config_path": "D:\\workspace\\QClaw\\stock\\us\\evening_stock_us\\tiger_openapi_config.properties",
+    "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/89a829de-fc60-4a7c-ade0-e4a422e9434b",
+    "send_to_feishu": false,
+    "notification": {
+      "_desc": "通知渠道配置",
+      "channels": [
+        "feishu"
+      ],
+      "weixin_target": "o9cq80-aiozlTjCmF5CjVtM5Mhyw@im.wechat"
+    }
+  }
+}

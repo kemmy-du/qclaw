@@ -1,0 +1,43 @@
+{
+  "_comment": "A股模拟账户系统配置文件",
+  "_version": "1.0.0",
+  "_desc": "供策略调用，无需登录注册，纯本地持久化",
+  "account": {
+    "account_id": "default",
+    "initial_cash": 1000000.0,
+    "_field_desc": {
+      "initial_cash": "初始资金（元）"
+    }
+  },
+  "fees": {
+    "commission_rate": 0.0003,
+    "stamp_tax_sell": 0.001,
+    "slippage_pct": 0.001,
+    "_field_desc": {
+      "commission_rate": "佣金费率（默认万三）",
+      "stamp_tax_sell": "印花税率（仅卖出，千一）",
+      "slippage_pct": "默认滑点（市价单加成比例）"
+    }
+  },
+  "rules": {
+    "min_trade_qty": 100,
+    "trade_qty_multiple": 100,
+    "t_plus_1": true,
+    "_field_desc": {
+      "min_trade_qty": "最小交易单位（100股=1手）",
+      "trade_qty_multiple": "交易数量必须是此数值的整数倍",
+      "t_plus_1": "启用T+1制度（今日买的股票今日不可卖）"
+    }
+  },
+  "market_data": {
+    "enable_live": true,
+    "_field_desc": {
+      "enable_live": "启用实时行情（关闭则所有price参数必填）"
+    }
+  },
+  "_usage": {
+    "from_common": "from common.sim_account import SimAccount, get_account",
+    "quick_start": "acc = get_account(); acc.buy('001270', 100); acc.sell('001270', 100); print(acc.get_stats())",
+    "data_file": "账户数据保存在 data/{account_id}.json"
+  }
+}

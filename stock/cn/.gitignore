@@ -1,0 +1,12 @@
+# 模拟账户数据
+*/data/*.json
+*.jsonl
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+*.log

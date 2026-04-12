@@ -1,0 +1,149 @@
+{
+    "templates": {
+        "trade_notification": {
+            "name": "成交通知",
+            "feishu": {
+                "title_template": "[{strategy_name}] {action_emoji} {action_text} - {symbol} ({name})",
+                "color_map": {
+                    "BUY": "green",
+                    "SELL": "red"
+                },
+                "emoji_map": {
+                    "BUY": "📈",
+                    "SELL": "📉"
+                },
+                "action_text_map": {
+                    "BUY": "买入",
+                    "SELL": "卖出"
+                },
+                "fields": [
+                    {"key": "交易方向", "value_template": "**{action_emoji} {action_text}**", "inline": true},
+                    {"key": "成交价格", "value_template": "`${price:.2f}`", "inline": true},
+                    {"key": "成交数量", "value_template": "`{qty}` 股", "inline": true},
+                    {"key": "订单ID", "value_template": "`{order_id}`", "inline": false}
+                ],
+                "extra_fields_enabled": true,
+                "footer_template": "⏰ {timestamp} | 🤖 {strategy_name} | 自动通知"
+            },
+            "weixin": {
+                "template": "{action_emoji} {symbol} {action_text} | ${price:.2f} x {qty}股"
+            }
+        },
+        "profit_notification": {
+            "name": "盈亏通知",
+            "feishu": {
+                "title_template": "[{strategy_name}] {profit_emoji} 卖出 - {symbol} ({name})",
+                "color_map": {
+                    "profit": "green",
+                    "loss": "red"
+                },
+                "profit_emoji_map": {
+                    "profit": "🟢",
+                    "loss": "🔴"
+                },
+                "fields": [
+                    {"key": "盈亏金额", "value_template": "{profit_emoji} `${profit_amount:.2f}`", "inline": true},
+                    {"key": "盈亏比例", "value_template": "{profit_emoji} `{profit_pct:+.2f}%`", "inline": true},
+                    {"key": "买入日期", "value_template": "{buy_date}", "inline": false},
+                    {"key": "卖出日期", "value_template": "{sell_date}", "inline": false},
+                    {"key": "买入价", "value_template": "`${buy_price:.2f}`", "inline": true},
+                    {"key": "卖出价", "value_template": "`${sell_price:.2f}`", "inline": true},
+                    {"key": "成交数量", "value_template": "`{qty}` 股", "inline": false}
+                ],
+                "footer_template": "⏰ {timestamp} | 🤖 {strategy_name} | 自动通知"
+            },
+            "weixin": {
+                "template": "{profit_emoji} 卖出 {symbol} | 盈亏: ${profit_amount:.2f} ({profit_pct:+.2f}%)"
+            }
+        },
+        "status_notification": {
+            "name": "状态通知",
+            "feishu": {
+                "title_template": "[{strategy_name}] {emoji} {symbol} 提醒",
+                "color_map": {
+                    "info": "blue",
+                    "warning": "orange",
+                    "error": "red",
+                    "success": "green"
+                },
+                "emoji_map": {
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "error": "❌",
+                    "success": "✅"
+                },
+                "content_template": "{content}",
+                "extra_fields_enabled": true,
+                "footer_template": "⏰ {timestamp} | 🤖 {strategy_name} | 自动通知"
+            },
+            "weixin": {
+                "template": "[{strategy_name}] {emoji} {content}"
+            }
+        },
+        "positions_report": {
+            "name": "持仓报告",
+            "feishu": {
+                "title_template": "[{strategy_name}] 老虎证券持仓报告-{date}",
+                "color": {
+                    "type": "context",
+                    "key": "color"
+                },
+                "sections": [
+                    {
+                        "name": "account_overview",
+                        "title": "📊 账户总览",
+                        "content_template": "💰 总资产: ${total_assets:,.0f}\n💵 可用现金: ${cash:,.0f}\n📈 持仓市值: ${total_market_value:,.0f}\n⚖️ 仓位比例: {position_ratio:.1f}%\n{daily_pnl_emoji} 当日盈亏: {daily_pnl_sign}${daily_pnl:,.0f} ({daily_pnl_sign}{daily_pnl_pct:.2f}%)"
+                    },
+                    {
+                        "name": "open_orders",
+                        "title": "📝 活跃挂单 ({order_count}笔)",
+                        "show_if": "order_count >= 0",
+                        "content_template": "{open_orders_text}"
+                    },
+                    {
+                        "name": "position_details",
+                        "title": "📋 持仓明细 ({position_count}只)",
+                        "content_template": "{position_details_content}"
+                    }
+                ],
+                "footer_template": "⏰ {timestamp} | 🤖 {strategy_name} | 自动通知"
+            },
+            "weixin": {
+                "template": "📊 持仓报告 | 总资产: ${total_assets:,.0f} | {daily_pnl_emoji} 盈亏: ${daily_pnl:,.0f}"
+            }
+        },
+        "error_notification": {
+            "name": "错误通知",
+            "feishu": {
+                "title_template": "❌ {strategy_name} 错误",
+                "color": "red",
+                "content_template": "**错误类型**: `{error_type}`\n**错误信息**: ```{error}```",
+                "fields": [
+                    {"key": "错误类型", "value_template": "`{error_type}`"},
+                    {"key": "错误信息", "value_template": "```{error}```"}
+                ],
+                "footer_template": "⏰ {timestamp} | 🤖 {strategy_name} | 自动通知"
+            },
+            "weixin": {
+                "template": "❌ {strategy_name} 错误 | {error_type}: {error[:50]}..."
+            }
+        }
+    },
+    "strategies": {
+        "stock_trader": {
+            "name": "定投策略",
+            "templates": ["trade_notification", "profit_notification", "status_notification"]
+        },
+        "stock_evening": {
+            "name": "尾盘策略",
+            "templates": ["trade_notification", "profit_notification", "status_notification"]
+        },
+        "positions_report": {
+            "name": "定投策略",
+            "templates": ["positions_report"]
+        }
+    },
+    "defaults": {
+        "timestamp_format": "%Y-%m-%d %H:%M:%S"
+    }
+}
