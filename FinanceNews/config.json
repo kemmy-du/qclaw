@@ -1,0 +1,14 @@
+{
+    "stocks": [
+        {"name": "贵州茅台", "code": "600519"},
+        {"name": "宁德时代", "code": "300750"},
+        {"name": "比亚迪", "code": "002594"},
+        {"name": "美的集团", "code": "000333"}
+    ],
+    "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/89a829de-fc60-4a7c-ade0-e4a422e9434b",
+    "query": {
+        "news_limit": 3,
+        "announcement_limit": 3,
+        "financial_metrics": ["净利润", "营业收入", "每股收益", "净资产收益率"]
+    }
+}
