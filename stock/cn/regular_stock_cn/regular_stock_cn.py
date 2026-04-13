@@ -7,10 +7,10 @@ A股定投策略 - 主程序入口
 
 用法:
   python stock_t_cn.py --symbol=603773 --init           # 初始化底仓
-  python stock_t_cn.py --symbol=603773 --hang-order    # 挂单捡漏（限价单）
+  python stock_t_cn.py --symbol=603773 --hang-order    # 年幕提醒（触发合并到 buy-check）
   python stock_t_cn.py --symbol=603773 --buy-check     # 买入检查
   python stock_t_cn.py --symbol=603773 --sell-check    # 卖出检查
-  python stock_t_cn.py --symbol=603773 --check-hang    # 检查收盘挂单
+  python stock_t_cn.py --symbol=603773 --check-hang    # 年幕提醒状态（已合并到 buy-check）
   python stock_t_cn.py --symbol=603773 --status        # 查看状态
 
   # 批量操作
@@ -222,6 +222,7 @@ def load_state(symbol):
             state.setdefault("hang_order_date", None)
             state.setdefault("hang_limit_price", None)
             state.setdefault("last_ema_high_sell_price", None)
+            state.setdefault("cleared_date", None)
             for b in state.get("batches", []):
                 if "trade_count" not in b:
                     b["trade_count"] = 0
@@ -230,7 +231,8 @@ def load_state(symbol):
         "base_established": False, "base_qty": 0, "batches": [],
         "batch_counter": 0, "pending_orders": [],
         "hang_order_id": None, "hang_order_date": None,
-        "hang_limit_price": None, "last_ema_high_sell_price": None
+        "hang_limit_price": None, "last_ema_high_sell_price": None,
+        "cleared_date": None
     }
 
 
@@ -404,14 +406,18 @@ def promote_batches_to_base(symbol, state, cfg):
 
 def do_hang_order(symbol, state, cfg):
     """
-    挂单捡漏
-    开盘前挂限价买单（挂单价 = 昨收 × (1 - hang_drop_pct)）
-    收盘时检查是否成交，未成交则撤销
-    """
-    print(f"\n[挂单] {symbol} 开始挂单捡漏...")
+    挂单捡漏 - 改为纯提醒模式
 
-    trade_enabled = cfg.get("trade_enabled", True)
-    watch_only = cfg.get("watch_only", False)
+    发送跌幅提醒，捡漏触发逻辑统一由 do_buy_check 中的跌幅买入执行。
+    hang_drop_pct 和 buy_drop_pct 合并使用（取较大值），避免双重判断。
+    """
+    print(f"\n[挂单提醒] {symbol} 跌幅提醒...")
+
+    cleared_date = state.get("cleared_date")
+    today_str = date.today().strftime("%Y-%m-%d")
+    if cleared_date and cleared_date == today_str:
+        print(f"[挂单] {symbol} 今日已清仓，跳过")
+        return False
 
     quote = get_quote(symbol)
     if not quote:
@@ -420,154 +426,60 @@ def do_hang_order(symbol, state, cfg):
 
     prev_close = quote.get("prev_close", 0)
     current_price = quote.get("last_price", 0)
+    # 合并 hang_drop_pct 和 buy_drop_pct，取较大值
     hang_drop_pct = cfg.get("hang_drop_pct", 0.05)
-    hang_price = round(prev_close * (1 - hang_drop_pct), 2)
-    hang_qty = cfg.get("hang_qty", 100)
+    buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
+    drop_pct = max(hang_drop_pct, buy_drop_pct)
+    trigger_price = round(prev_close * (1 - drop_pct), 2)
+    trigger_source = "挂单捡漏" if hang_drop_pct > buy_drop_pct else "跌幅买入"
     name = cfg.get("name", symbol)
 
     print(f"[挂单] {symbol} ({name}): 昨收=¥{prev_close:.2f}, 现价=¥{current_price:.2f}, "
-          f"挂单价=¥{hang_price:.2f} (昨收×{1-hang_drop_pct:.2%})")
+          f"触发价=¥{trigger_price:.2f} (跌幅≥{drop_pct:.2%})")
 
-    if watch_only:
-        print(f"[监控] {symbol} 仅监控模式，不挂单")
-        notif_content = f"""**【{symbol} 捡漏挂单信号】**
+    notif_content = f"""**【{symbol} 跌幅买入提醒】**
 
+📈 市场: A股
 🏷️ 代码: `{symbol}`
-📊 市场: A股
+💰 当前价格: `¥{current_price:.2f}`
 💰 昨收价格: `¥{prev_close:.2f}`
-💰 挂单价格: `¥{hang_price:.2f}` (昨收 × {1-hang_drop_pct:.2%})
-📊 挂单数量: `{hang_qty}` 股
+📊 跌幅触发价: `¥{trigger_price:.2f}` (昨收 × {1-drop_pct:.2%})
+📊 当前跌幅: `{(current_price/prev_close-1)*100:.2f}%`
 
-⚠️ 仅监控模式，请人工判断是否挂单！"""
-        send_status_notification(symbol, notif_content, color="blue")
-        return True
+⚠️ 跌幅已达触发线，将由每日 buy_check 自动执行买入。
 
-    if not trade_enabled:
-        print(f"[挂单] {symbol} 交易未启用，跳过挂单")
-        return False
+请确保 buy_check 定时任务正常运行！"""
 
-    daily_op = load_daily_op(symbol)
-    if daily_op.get("hang_order_placed", False):
-        print(f"[挂单] {name}({symbol}) 今日已挂单，跳过")
-        return False
+    send_status_notification(symbol, notif_content, color="orange")
 
-    result = cn_sim.place_limit_buy(symbol, name, hang_qty, hang_price, "定投捡漏")
-
-    if result.get("success"):
-        print(f"[挂单] {name}({symbol}): 挂单价=¥{hang_price:.2f}, 数量={hang_qty}股")
-        state["hang_order_id"] = result.get("order_id")
-        state["hang_order_date"] = date.today().strftime("%Y-%m-%d")
-        state["hang_limit_price"] = hang_price
-        save_state(state, symbol)
-
-        daily_op["hang_order_placed"] = True
-        save_daily_op(daily_op, symbol)
-
-        notif_content = f"""**【{name} 捡漏挂单成功】**
-
-🏷️ 代码: `{symbol}`
-📊 市场: A股
-💰 昨收价格: `¥{prev_close:.2f}`
-💰 挂单价格: `¥{hang_price:.2f}` (昨收 × {1-hang_drop_pct:.2%})
-📊 挂单数量: `{hang_qty}` 股
-💵 冻结金额: `¥{hang_price * hang_qty:,.2f}`
-
-⏰ 收盘后将检查是否成交"""
-        send_status_notification(symbol, notif_content, color="blue")
-        return True
-    else:
-        print(f"[挂单] {symbol} 挂单失败: {result.get('message')}")
-        return False
+    state["hang_order_date"] = today_str
+    save_state(state, symbol)
+    return True
 
 
 def check_hang_order(symbol, state, cfg):
-    """收盘检查挂单：成交则建立底仓/批次，未成交则撤销"""
-    print(f"\n[挂单检查] {symbol} 检查收盘挂单...")
+    """
+    挂单检查 - 改为纯提醒
 
-    hang_order_id = state.get("hang_order_id")
-    if not hang_order_id:
-        print(f"[挂单检查] {symbol} 无待处理挂单")
-        return False
-
-    quote = get_quote(symbol)
-    if not quote:
-        print(f"[挂单检查] {symbol} 无法获取行情")
-        return False
-
-    today_low = quote.get("low", 0)
-    if today_low <= 0:
-        today_low = quote.get("last_price", 0)
-
-    hang_limit_price = state.get("hang_limit_price", 0)
-    hang_qty = cfg.get("hang_qty", 100)
-    name = cfg.get("name", symbol)
-
-    print(f"[挂单检查] {symbol} 当天最低价=¥{today_low:.2f}, 挂单价=¥{hang_limit_price:.2f}")
-
-    result = cn_sim.check_close_pending(symbol, today_low)
-
-    if result is None:
-        print(f"[挂单检查] {symbol} 无 pending 挂单")
-        return False
-
-    if result.get("cancelled"):
-        print(f"[挂单检查] {symbol} 挂单已撤销")
-        state["hang_order_id"] = None
-        state["hang_limit_price"] = None
-        save_state(state, symbol)
-        return False
-
-    if result.get("filled"):
-        filled_qty = result.get("qty", hang_qty)
-        fill_price = result.get("fill_price", hang_limit_price)
-        today_str = date.today().strftime("%Y-%m-%d")
-
-        print(f"[挂单检查] {symbol} 挂单成交: {filled_qty}股 @ ¥{fill_price:.2f}")
-
-        if not state.get("base_established"):
-            state["base_established"] = True
-            state["base_qty"] = filled_qty
-            print(f"[底仓] {symbol} 底仓初始化: {filled_qty}股 @ ¥{fill_price:.2f}")
-        else:
-            base_qty = state.get("base_qty", 0)
-            state["base_qty"] = base_qty + filled_qty
-            batch_counter = state.get("batch_counter", 0) + 1
-            state["batch_counter"] = batch_counter
-            new_batch = {
-                "id": batch_counter,
-                "buy_date": today_str,
-                "buy_price": fill_price,
-                "qty": filled_qty,
-                "signal": "hang_order",
-                "status": "holding",
-                "trade_count": 0
-            }
-            state.setdefault("batches", []).insert(0, new_batch)
-            print(f"[批次] {symbol} 批次 #{batch_counter} 创建: {filled_qty}股 @ ¥{fill_price:.2f}")
-
-        state["hang_order_id"] = None
-        state["hang_limit_price"] = None
-        save_state(state, symbol)
-        update_config_base_position(symbol, state["base_qty"])
-
-        notif_content = f"""**【{name} 捡漏成交】**
-
-🏷️ 代码: `{symbol}`
-📊 市场: A股
-💰 成交价格: `¥{fill_price:.2f}`
-📊 成交数量: `{filled_qty}` 股
-💵 成交金额: `¥{fill_price * filled_qty:,.2f}`
-
-✅ 当天最低价¥{today_low:.2f} <= 挂单价¥{hang_limit_price:.2f}，触发成交"""
-        send_status_notification(symbol, notif_content, color="green")
-        return True
-
+    挂单捡漏已改为纯提醒模式，不再实际挂单。
+    捡漏触发逻辑统一由 do_buy_check 中的跌幅买入执行。
+    此函数保留用于兼容，输出提示信息。
+    """
+    print(f"\n[挂单检查] {symbol} 挂单捡漏已改为纯提醒模式，无需检查。")
+    print(f"[挂单检查] {symbol} 捡漏触发已合并到 buy_check 的跌幅买入中。")
     return False
 
 
 def do_buy_check(symbol, state, cfg):
     """买入检查（EMA信号 + 底仓管理）"""
     print(f"\n[买入检查] {symbol} 开始检查...")
+
+    # 清仓当日禁止交易
+    cleared_date = state.get("cleared_date")
+    today_str = date.today().strftime("%Y-%m-%d")
+    if cleared_date and cleared_date == today_str:
+        print(f"[买入检查] {symbol} 今日已清仓，禁止交易，次日方可重建底仓")
+        return False
 
     daily_op = load_daily_op(symbol)
     if daily_op.get("buy_count", 0) >= cfg.get("max_buy_count", 2):
@@ -692,11 +604,18 @@ def do_buy_check(symbol, state, cfg):
             signal = "ema_oversold"
             signal_reason = f"EMA超跌，现价{current_price:.2f}<=EMA×(1-{oversold_mult})，直接买入"
 
-    # 当日跌幅触发买入（现价 < 昨收 × (1 - buy_drop_pct)）
+    # 当日跌幅触发买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
+    # hang_drop_pct：挂单捡漏阈值（由 hang_order 提醒）
+    # buy_drop_pct：跌幅买入阈值（由 buy_check 检查）
+    # 二者合并，取跌幅更大者作为触发条件
     if not signal:
-        buy_drop_pct = cfg.get("buy_drop_pct", 0)
-        if buy_drop_pct > 0:
-            trigger_price = prev_close * (1 - buy_drop_pct)
+        hang_drop_pct = cfg.get("hang_drop_pct", 0.05)
+        buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
+        drop_pct = max(hang_drop_pct, buy_drop_pct)
+        trigger_source = "挂单捡漏" if hang_drop_pct > buy_drop_pct else "跌幅买入"
+
+        if drop_pct > 0:
+            trigger_price = round(prev_close * (1 - drop_pct), 2)
             if current_price < trigger_price:
                 ema_filter = cfg.get("buy_drop_ema_filter", False)
                 ema_ok = True
@@ -705,17 +624,16 @@ def do_buy_check(symbol, state, cfg):
                 if ema_ok:
                     signal = "daily_drop_buy"
                     filter_note = "（EMA信号确认）" if ema_filter else "（直接触发）"
-                    signal_reason = (f"当日跌幅买入，现价¥{current_price:.2f}<昨收¥{prev_close:.2f}×{1-buy_drop_pct:.2%}"
-                                     f"=¥{trigger_price:.2f}{filter_note}")
+                    signal_reason = (f"跌幅买入，现价¥{current_price:.2f}<昨收¥{prev_close:.2f}×{1-drop_pct:.2%}"
+                                     f"=¥{trigger_price:.2f}（来源:{trigger_source}）{filter_note}")
                 elif ema_filter and not ema_ok:
-                    # 跌幅够，但 EMA 未确认，仅通知
                     notif_content = f"""**【{symbol} 跌幅信号 - 等待EMA确认】**
 
 🏷️ 代码: `{symbol}`
 📊 市场: A股
 💰 当前价格: `¥{current_price:.2f}`
 💰 昨收价格: `¥{prev_close:.2f}`
-📊 触发条件: 昨收 × (1 - {buy_drop_pct:.2%}) = `¥{trigger_price:.2f}`
+📊 触发条件: 昨收 × (1 - {drop_pct:.2%}) = `¥{trigger_price:.2f}`
 📐 EMA13: `¥{latest_ema:.2f}`
 
 ⚠️ 跌幅已达标（现价 < ¥{trigger_price:.2f}），但 EMA 尚未突破/回踩确认，暂时观望。
@@ -828,6 +746,13 @@ def do_buy_check(symbol, state, cfg):
 def do_sell_check(symbol, state, cfg):
     """卖出检查（EMA高位 + 短期止盈 + 盈利清仓）"""
     print(f"\n[卖出检查] {symbol} 开始检查...")
+
+    # 清仓当日禁止交易
+    cleared_date = state.get("cleared_date")
+    today_str = date.today().strftime("%Y-%m-%d")
+    if cleared_date and cleared_date == today_str:
+        print(f"[卖出检查] {symbol} 今日已清仓，禁止交易，次日方可重建底仓")
+        return False
 
     daily_op = load_daily_op(symbol)
     if daily_op.get("sell_count", 0) >= cfg.get("max_sell_count", 2):
@@ -994,8 +919,9 @@ def do_sell_check(symbol, state, cfg):
             state["base_established"] = False
             state["base_qty"] = 0
             state["batches"] = []
+            state["cleared_date"] = today_str
             save_state(state, symbol)
-            print(f"[盈利清仓] {symbol} 全部持仓已清，state 已重置")
+            print(f"[盈利清仓] {symbol} 全部持仓已清，state 已重置，今日禁止交易")
 
         send_trade_notification(symbol, "SELL", current_price, sell_qty, order_id, signal_reason, {
             "signal": signal,
@@ -1048,11 +974,11 @@ def show_status(symbol, state, cfg):
         print(f"  最新收盘: ¥{kline['close'].iloc[-1]:.2f}")
         print(f"  EMA13: ¥{kline['ema'].iloc[-1]:.2f}")
 
-    if state.get("hang_order_id"):
-        print(f"\n[挂单]")
-        print(f"  挂单ID: {state.get('hang_order_id')}")
-        print(f"  挂单日期: {state.get('hang_order_date')}")
-        print(f"  挂单价格: ¥{state.get('hang_limit_price', 0):.2f}")
+    if state.get("hang_order_date"):
+        # hang_order_date 现在记录的是提醒日期，不是挂单ID
+        print(f"\n[跌幅提醒]")
+        print(f"  提醒日期: {state.get('hang_order_date')}")
+        print(f"  触发阈值: {max(cfg.get('hang_drop_pct', 0.05), cfg.get('buy_drop_pct', 0.08)):.2%}")
 
     print(f"\n{'='*60}")
 
