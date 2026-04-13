@@ -715,15 +715,9 @@ def do_buy_check(symbol, state, cfg):
             signal = "ema_oversold"
             signal_reason = f"EMA超跌，现价{current_price:.2f}<=EMA×(1-{oversold_mult})，直接买入"
 
-# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
-# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
-    # buy_drop_pct：跌幅买入阈值（由 buy_check 检查）
     # 二者合并，取跌幅更大者作为触发条件
     if not signal:
-        hang_drop_pct = cfg.get("hang_drop_pct", 0.08)
         buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
-        drop_pct = max(hang_drop_pct, buy_drop_pct)
-# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
 
         if drop_pct > 0:
             trigger_price = prev_close * (1 - drop_pct)
@@ -736,7 +730,7 @@ def do_buy_check(symbol, state, cfg):
                     signal = "daily_drop_buy"
                     filter_note = "（EMA信号确认）" if ema_filter else "（直接触发）"
                     signal_reason = (f"跌幅买入，现价${current_price:.2f}<昨收${prev_close:.2f}×{1-drop_pct:.2%}"
-                                     f"=${trigger_price:.2f}（来源:{trigger_source}）{filter_note}")
+                                     f"=${trigger_price:.2f}{filter_note}")
                 elif ema_filter and not ema_ok:
                     notif_content = f"""**【{symbol} 跌幅信号 - 等待EMA确认】**
 
