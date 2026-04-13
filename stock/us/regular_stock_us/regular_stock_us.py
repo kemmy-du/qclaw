@@ -6,11 +6,9 @@
 
 用法:
   python stock_t.py --symbol=LITE --init          # 初始化底仓
-  python stock_t.py --symbol=LITE --hang-order    # 挂单捡漏
   python stock_t.py --symbol=LITE --buy-check     # 买入检查
   python stock_t.py --symbol=LITE --sell-check    # 卖出检查
   python stock_t.py --symbol=LITE --sync          # 订单同步
-  python stock_t.py --symbol=LITE --check-hang    # 检查挂单
   python stock_t.py --symbol=LITE --status        # 查看状态
 
 A股使用本地模拟账户，美股使用老虎证券。
@@ -259,7 +257,7 @@ def load_daily_op():
     if SYMBOL:
         return load_daily_op_by_symbol(SYMBOL)
     today_str = date.today().strftime("%Y-%m-%d")
-    return {"date": today_str, "sold": False, "bought": False, "hang_order_placed": False, "op_count": 0, "buy_count": 0, "sell_count": 0}
+    return {"date": today_str, "sold": False, "bought": False, "op_count": 0, "buy_count": 0, "sell_count": 0}
 
 def load_daily_op_by_symbol(symbol):
     daily_file = get_daily_op_file(symbol)
@@ -270,7 +268,7 @@ def load_daily_op_by_symbol(symbol):
             data = json.load(f)
             if data.get("date") == today_str:
                 return data
-    return {"date": today_str, "sold": False, "bought": False, "hang_order_placed": False, "op_count": 0, "buy_count": 0, "sell_count": 0}
+    return {"date": today_str, "sold": False, "bought": False, "op_count": 0, "buy_count": 0, "sell_count": 0}
 
 def save_daily_op(data):
     if SYMBOL:
@@ -519,61 +517,6 @@ def is_market_open():
     market_close = datetime.strptime("16:00", "%H:%M").time()
     return market_open <= current_time <= market_close
 
-def do_hang_order(symbol, state, cfg):
-    """
-    挂单捡漏 - 改为纯提醒模式
-
-    发送跌幅提醒，捡漏触发逻辑统一由 do_buy_check 中的跌幅买入执行。
-    hang_drop_pct 和 buy_drop_pct 合并使用（取较大值），避免双重判断。
-    """
-    print(f"\n[挂单提醒] {symbol} 跌幅提醒...")
-
-    cleared_date = state.get("cleared_date")
-    today_str = date.today().strftime("%Y-%m-%d")
-    if cleared_date and cleared_date == today_str:
-        print(f"[挂单] {symbol} 今日已清仓，跳过")
-        return False
-
-    quote = get_quote(symbol)
-    if not quote:
-        print(f"[挂单] {symbol} 无法获取行情")
-        return False
-
-    prev_close = quote.get("prev_close", 0)
-    current_price = quote.get("last_price", 0)
-    # 合并 hang_drop_pct 和 buy_drop_pct，取较大值
-    hang_drop_pct = cfg.get("hang_drop_pct", 0.08)
-    buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
-    drop_pct = max(hang_drop_pct, buy_drop_pct)
-    trigger_price = prev_close * (1 - drop_pct)
-    trigger_pct_label = "hang_drop" if hang_drop_pct > buy_drop_pct else "buy_drop"
-
-    print(f"[挂单] {symbol}: 昨收=${prev_close:.2f}, 现价=${current_price:.2f}, "
-          f"触发价=${trigger_price:.2f} (跌幅≥{drop_pct:.2%})")
-
-    # 发飞书提醒，触发条件告知
-    notif_content = f"""**【{symbol} 跌幅买入提醒】**
-
-📈 市场: 美股
-🏷️ 代码: `{symbol}`
-💰 当前价格: `${current_price:.2f}`
-💰 昨收价格: `${prev_close:.2f}`
-📊 跌幅触发价: `${trigger_price:.2f}` (昨收 × {1-drop_pct:.2%})
-📊 当前跌幅: `{(current_price/prev_close-1)*100:.2f}%`
-
-⚠️ 跌幅已达触发线，将由每日 buy_check 自动执行买入。
-
-请确保 buy_check 定时任务正常运行！"""
-
-    send_status_notification(symbol, notif_content, color="orange")
-
-    # 记录提醒时间（供后续排查）
-    state["hang_order_date"] = today_str
-    save_state(state, symbol)
-    return True
-
-    return False
-
 def promote_batches_to_base(symbol, state, cfg):
     """
     动态底仓逻辑：
@@ -608,56 +551,6 @@ def promote_batches_to_base(symbol, state, cfg):
         batch_ids = [b.get("id") for b in promoted_batches]
         print(f"[动态底仓] {symbol} 升级 {len(promoted_batches)} 个批次({'/'.join(map(str, batch_ids))}) 共{total_promoted}股 -> "
               f"base_qty: {old_base} -> {state['base_qty']}")
-
-def check_hang_order(symbol, state, cfg):
-    """
-    检查挂单状态
-
-    检查老虎证券订单状态。
-    """
-    print(f"\n[挂单检查] {symbol} 检查挂单状态...")
-
-    api = get_tiger_api(cfg)
-    if not api:
-        return False
-
-    hang_order_id = state.get("hang_order_id")
-    if not hang_order_id:
-        print(f"[挂单检查] {symbol} 无待处理挂单")
-        return False
-
-    try:
-        resp = api.get_orders(account=ACCOUNT)
-        if not isinstance(resp, dict):
-            print(f"[挂单检查] {symbol} 查询返回无效: {type(resp).__name__}")
-            return False
-        if resp.get("code") == 0:
-            data = resp.get("data", {})
-            if not isinstance(data, dict):
-                data = {}
-            for order in data.get("items", []):
-                if str(order.get("id")) == str(hang_order_id):
-                    status = order.get("status")
-                    print(f"[挂单检查] {symbol} 订单状态: {status}")
-
-                    if status in ["filled", "partial_fill"]:
-                        filled_qty = int(order.get("filled_quantity", 0))
-                        avg_price = float(order.get("avg_fill_price", 0))
-                        if filled_qty > 0 and avg_price > 0:
-                            print(f"[挂单检查] {symbol} 挂单成交: {filled_qty}股 @ ${avg_price:.2f}")
-                            state["base_qty"] = state.get("base_qty", 0) + filled_qty
-                            state["hang_order_id"] = None
-                            save_state(state, symbol)
-                            return True
-                    elif status in ["cancelled", "rejected", "expired"]:
-                        print(f"[挂单检查] {symbol} 挂单{status}，重置")
-                        state["hang_order_id"] = None
-                        save_state(state, symbol)
-                        return False
-    except Exception as e:
-        print(f"[挂单检查] {symbol} 查询失败: {e}")
-
-    return False
 
 def do_buy_check(symbol, state, cfg):
     """
@@ -822,15 +715,15 @@ def do_buy_check(symbol, state, cfg):
             signal = "ema_oversold"
             signal_reason = f"EMA超跌，现价{current_price:.2f}<=EMA×(1-{oversold_mult})，直接买入"
 
-    # 4. 当日跌幅触发买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
-    # hang_drop_pct：挂单捡漏阈值（由 hang_order 提醒）
+# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
+# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
     # buy_drop_pct：跌幅买入阈值（由 buy_check 检查）
     # 二者合并，取跌幅更大者作为触发条件
     if not signal:
         hang_drop_pct = cfg.get("hang_drop_pct", 0.08)
         buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
         drop_pct = max(hang_drop_pct, buy_drop_pct)
-        trigger_source = "挂单捡漏" if hang_drop_pct > buy_drop_pct else "跌幅买入"
+# 当日跌幅买入（合并 hang_drop_pct + buy_drop_pct，取较大值）
 
         if drop_pct > 0:
             trigger_price = prev_close * (1 - drop_pct)
@@ -1302,12 +1195,6 @@ def show_status(symbol, state, cfg):
         print(f"  最新收盘: ${kline['close'].iloc[-1]:.2f}")
         print(f"  EMA13: ${kline['ema'].iloc[-1]:.2f}")
 
-    # 显示跌幅提醒状态
-    if state.get("hang_order_date"):
-        print(f"\n[跌幅提醒]")
-        print(f"  提醒日期: {state.get('hang_order_date')}")
-        print(f"  触发阈值: {max(cfg.get('hang_drop_pct', 0.08), cfg.get('buy_drop_pct', 0.08)):.2%}")
-
     print(f"\n{'='*60}")
 
 # ============================================================
@@ -1319,11 +1206,9 @@ def main():
         print(__doc__)
         print("\n可用参数:")
         print("  --symbol=XXX --init         初始化底仓")
-        print("  --symbol=XXX --hang-order   跌幅提醒（触发合并到 buy-check）")
         print("  --symbol=XXX --buy-check    买入检查")
         print("  --symbol=XXX --sell-check  卖出检查")
         print("  --symbol=XXX --sync         同步订单")
-        print("  --symbol=XXX --check-hang   跌幅提醒状态（已合并到 buy-check）")
         print("  --symbol=XXX --status       查看状态")
         print("  --hang-all                 批量处理所有股票")
         sys.exit(1)
@@ -1333,16 +1218,12 @@ def main():
     for arg in sys.argv[1:]:
         if arg == "--init":
             cmd = "init"
-        elif arg == "--hang-order":
-            cmd = "hang_order"
         elif arg == "--buy-check":
             cmd = "buy_check"
         elif arg == "--sell-check":
             cmd = "sell_check"
         elif arg == "--sync":
             cmd = "sync"
-        elif arg == "--check-hang":
-            cmd = "check_hang"
         elif arg == "--status":
             cmd = "status"
 
@@ -1373,11 +1254,7 @@ def main():
                 cfg = get_symbol_config(symbol)
                 state = load_state(symbol)
 
-                if cmd == "hang_order":
-                    do_hang_order(symbol, state, cfg)
-                elif cmd == "check_hang":
-                    check_hang_order(symbol, state, cfg)
-                elif cmd == "buy_check":
+                if cmd == "buy_check":
                     do_buy_check(symbol, state, cfg)
                 elif cmd == "sell_check":
                     do_sell_check(symbol, state, cfg)
@@ -1418,9 +1295,6 @@ def main():
         else:
             print(f"[初始化] {SYMBOL} 无法获取API")
 
-    elif cmd == "hang_order":
-        do_hang_order(SYMBOL, state, CONFIG)
-
     elif cmd == "buy_check":
         do_buy_check(SYMBOL, state, CONFIG)
 
@@ -1429,9 +1303,6 @@ def main():
 
     elif cmd == "sync":
         sync_orders(SYMBOL, state, CONFIG)
-
-    elif cmd == "check_hang":
-        check_hang_order(SYMBOL, state, CONFIG)
 
     elif cmd == "status":
         show_status(SYMBOL, state, CONFIG)
