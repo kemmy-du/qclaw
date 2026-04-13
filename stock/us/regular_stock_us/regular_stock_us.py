@@ -619,8 +619,16 @@ def do_buy_check(symbol, state, cfg):
             send_status_notification(symbol, notif_content, color="blue")
         return False
 
+    # 综合计算 EMA：使用增量方式更新 EMA
+    # EMA 增量更新公式: New_EMA = Prev_EMA × (1 - 2/(n+1)) + Current_Price × (2/(n+1))
     kline['ema'] = calc_ema(kline, cfg.get("ema_period", 13))
-    latest_ema = kline['ema'].iloc[-1]
+    prev_ema = kline['ema'].iloc[-1]
+    ema_period = cfg.get("ema_period", 13)
+    k = 2 / (ema_period + 1)
+    if current_price > 0:
+        latest_ema = prev_ema * (1 - k) + current_price * k
+    else:
+        latest_ema = prev_ema
 
     print(f"[EMA] {symbol}: 当前EMA={latest_ema:.2f}")
 
@@ -719,8 +727,8 @@ def do_buy_check(symbol, state, cfg):
     if not signal:
         buy_drop_pct = cfg.get("buy_drop_pct", 0.08)
 
-        if drop_pct > 0:
-            trigger_price = prev_close * (1 - drop_pct)
+        if buy_drop_pct > 0:
+            trigger_price = prev_close * (1 - buy_drop_pct)
             if current_price < trigger_price:
                 ema_filter = cfg.get("buy_drop_ema_filter", False)
                 ema_ok = True
@@ -729,7 +737,7 @@ def do_buy_check(symbol, state, cfg):
                 if ema_ok:
                     signal = "daily_drop_buy"
                     filter_note = "（EMA信号确认）" if ema_filter else "（直接触发）"
-                    signal_reason = (f"跌幅买入，现价${current_price:.2f}<昨收${prev_close:.2f}×{1-drop_pct:.2%}"
+                    signal_reason = (f"跌幅买入，现价${current_price:.2f}<昨收${prev_close:.2f}×{1-buy_drop_pct:.2%}"
                                      f"=${trigger_price:.2f}{filter_note}")
                 elif ema_filter and not ema_ok:
                     notif_content = f"""**【{symbol} 跌幅信号 - 等待EMA确认】**
@@ -738,7 +746,7 @@ def do_buy_check(symbol, state, cfg):
 📊 市场: 美股
 💰 当前价格: `${current_price:.2f}`
 💰 昨收价格: `${prev_close:.2f}`
-📊 触发条件: 昨收 × (1 - {drop_pct:.2%}) = `${trigger_price:.2f}`
+📊 触发条件: 昨收 × (1 - {buy_drop_pct:.2%}) = `${trigger_price:.2f}`
 📐 EMA13: `${latest_ema:.2f}`
 
 ⚠️ 跌幅已达标（现价 < ${trigger_price:.2f}），但 EMA 尚未突破/回踩确认，暂时观望。
@@ -747,11 +755,37 @@ def do_buy_check(symbol, state, cfg):
                     print(f"[买入检查] {symbol} 跌幅达标（现价${current_price:.2f}<${trigger_price:.2f}），"
                           f"但EMA未确认，仅通知")
 
-    if not signal:
-        print(f"[买入检查] {symbol} 无买入信号")
-        return False
+    # 检查持仓（使用统一接口）
+    positions = get_positions_unified(symbol, cfg)
+    sym_pos = None
+    for pos in positions:
+        if pos.get("symbol") == symbol:
+            sym_pos = pos
+            break
 
-    print(f"[信号] {symbol}: {signal} - {signal_reason}")
+    current_qty = int(sym_pos.get("quantity", 0)) if sym_pos else 0
+    base_position = cfg.get("base_position", 1)
+    trade_qty = cfg.get("trade_qty", 1)
+
+    # 无EMA/跌幅信号时：仍检查底仓是否需要初始化
+    if not signal:
+        if not state.get("base_established"):
+            if current_qty < base_position:
+                buy_qty = base_position - current_qty
+                signal = "init_base"
+                signal_reason = f"初始化底仓，买入{buy_qty}股"
+                print(f"[信号] {symbol}: {signal} - {signal_reason}")
+            else:
+                print(f"[买入检查] {symbol} 底仓已建立，无EMA信号")
+                state["base_established"] = True
+                state["base_qty"] = current_qty
+                save_state(state, symbol)
+                return False
+        else:
+            print(f"[买入检查] {symbol} 无买入信号")
+            return False
+    else:
+        print(f"[信号] {symbol}: {signal} - {signal_reason}")
 
     # 检查是否启用交易
     trade_enabled = cfg.get("trade_enabled", True)
@@ -784,40 +818,7 @@ def do_buy_check(symbol, state, cfg):
         send_status_notification(symbol, notif_content, color="orange")
         return True
 
-    # 检查持仓（使用统一接口）
-    positions = get_positions_unified(symbol, cfg)
-    sym_pos = None
-    for pos in positions:
-        if pos.get("symbol") == symbol:
-            sym_pos = pos
-            break
 
-    current_qty = int(sym_pos.get("quantity", 0)) if sym_pos else 0
-    base_position = cfg.get("base_position", 1)
-    trade_qty = cfg.get("trade_qty", 1)
-
-    print(f"[持仓] {symbol}: {current_qty} 股（底仓={base_position}）")
-
-    buy_qty = 0
-    if not state.get("base_established"):
-        if current_qty < base_position:
-            buy_qty = base_position - current_qty
-            signal = "init_base"
-            signal_reason = f"初始化底仓，买入{buy_qty}股"
-        else:
-            print(f"[买入检查] {symbol} 底仓已建立")
-            state["base_established"] = True
-            state["base_qty"] = current_qty
-            save_state(state, symbol)
-    else:
-        if current_qty < state.get("base_qty", base_position):
-            buy_qty = state.get("base_qty", base_position) - current_qty
-        elif current_qty >= state.get("base_qty", base_position):
-            buy_qty = trade_qty
-
-    if buy_qty <= 0:
-        print(f"[买入检查] {symbol} 无需买入")
-        return False
 
     # 执行买入（使用统一接口）
     name = cfg.get("name", symbol)
@@ -929,8 +930,16 @@ def do_sell_check(symbol, state, cfg):
         print(f"[卖出检查] {symbol} K线数据不足")
         return False
 
+    # 综合计算 EMA：使用增量方式更新 EMA
+    # EMA 增量更新公式: New_EMA = Prev_EMA × (1 - 2/(n+1)) + Current_Price × (2/(n+1))
     kline['ema'] = calc_ema(kline, cfg.get("ema_period", 13))
-    latest_ema = kline['ema'].iloc[-1]
+    prev_ema = kline['ema'].iloc[-1]
+    ema_period = cfg.get("ema_period", 13)
+    k = 2 / (ema_period + 1)
+    if current_price > 0:
+        latest_ema = prev_ema * (1 - k) + current_price * k
+    else:
+        latest_ema = prev_ema
     ema_multiplier = cfg.get("ema_sell_high_multiplier", 0.2)
 
     print(f"[EMA] {symbol}: 当前EMA={latest_ema:.2f}, 卖出线={latest_ema*(1+ema_multiplier):.2f}")

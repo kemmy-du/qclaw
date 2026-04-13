@@ -40,7 +40,11 @@ from common.market_data_cn import (
 )
 
 # A股模拟账户
-import cn_sim_account as cn_sim
+from common.sim_account import get_account as sim_get_account
+
+# 获取A股模拟账户
+def get_sim_account(symbol):
+    return sim_get_account(symbol)
 
 
 # ============================================================
@@ -331,7 +335,7 @@ def archive_on_clear(symbol, state):
 # ============================================================
 
 def get_cn_positions(symbol: str = None):
-    return cn_sim.get_positions(symbol)
+    return get_sim_account(symbol).get_positions(symbol)
 
 
 def cn_buy(symbol: str, name: str, qty: int, price: float, reason: str = "") -> dict:
@@ -339,7 +343,7 @@ def cn_buy(symbol: str, name: str, qty: int, price: float, reason: str = "") -> 
     if qty % 100 != 0:
         qty = ((qty // 100) + 1) * 100
         print(f"[A股] 买入数量调整为 {qty} 股（100的整数倍）")
-    result = cn_sim.buy(symbol, name, qty, price, reason)
+    result = get_sim_account(symbol).buy(symbol, name, qty, price, reason)
     return result
 
 
@@ -350,7 +354,7 @@ def cn_sell(symbol: str, qty: int, price: float, reason: str = "") -> dict:
         if qty <= 0:
             return {"success": False, "message": "卖出数量不足100股"}
         print(f"[A股] 卖出数量调整为 {qty} 股（100的整数倍）")
-    result = cn_sim.sell(symbol, qty, price, reason)
+    result = get_sim_account(symbol).sell(symbol, qty, price, reason)
     return result
 
 
@@ -568,11 +572,31 @@ def do_buy_check(symbol, state, cfg):
                     print(f"[买入检查] {symbol} 跌幅达标（现价¥{current_price:.2f}<¥{trigger_price:.2f}），"
                           f"但EMA未确认，仅通知")
 
+    # 无EMA/跌幅信号时：仍检查底仓是否需要初始化
     if not signal:
-        print(f"[买入检查] {symbol} 无买入信号")
-        return False
-
-    print(f"[信号] {symbol}: {signal} - {signal_reason}")
+        # 检查持仓
+        positions = get_cn_positions(symbol)
+        sym_pos = positions[0] if positions else None
+        current_qty = int(sym_pos.get("quantity", 0)) if sym_pos else 0
+        base_position = cfg.get("base_position", 100)
+        
+        if not state.get("base_established"):
+            if current_qty < base_position:
+                buy_qty = base_position - current_qty
+                signal = "init_base"
+                signal_reason = f"初始化底仓，买入{buy_qty}股"
+                print(f"[信号] {symbol}: {signal} - {signal_reason}")
+            else:
+                print(f"[买入检查] {symbol} 底仓已建立，无EMA信号")
+                state["base_established"] = True
+                state["base_qty"] = current_qty
+                save_state(state, symbol)
+                return False
+        else:
+            print(f"[买入检查] {symbol} 无买入信号")
+            return False
+    else:
+        print(f"[信号] {symbol}: {signal} - {signal_reason}")
 
     if not cfg.get("trade_enabled", True) or cfg.get("watch_only", False):
         print(f"[监控] {symbol} 仅监控模式，发送信号通知...")
